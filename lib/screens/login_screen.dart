@@ -98,7 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (code != null && receivedState == storedState) {
         final params = {
-          'client_id': '6',
+          'client_id': '27',
           'redirect_uri': redirectUri,
           'code_verifier': verifier ?? '',
           'code': code,
