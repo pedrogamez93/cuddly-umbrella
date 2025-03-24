@@ -4,11 +4,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:ips_app_chileatiende/screens/logged_in_screen.dart';
 import 'package:ips_app_chileatiende/screens/login_screen.dart';
+import 'package:ips_app_chileatiende/widgets/base_screen.dart'; // Importa BaseScreen
 import 'dart:developer';
+import 'package:ips_app_chileatiende/screens/profile_screen.dart';
 
 void main() {
   // Configura HttpOverrides para ignorar verificación SSL
   HttpOverrides.global = MyHttpOverrides();
+  
 
   runZonedGuarded(() {
     runApp(MyApp());
@@ -36,11 +39,11 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
       ),
       debugShowCheckedModeBanner: false,
-      // Configuración de rutas
-      initialRoute: '/',
+      initialRoute: '/', // Pantalla inicial es LoginScreen
       routes: {
-        '/': (context) => LoginScreen(), // Ruta inicial
-        '/logged_in_screen': (context) => LoggedInScreen(), // Ruta para "¡Logueado!"
+        '/': (context) => LoginScreen(), // LoginScreen independiente
+        '/home': (context) => BaseScreen(), // BaseScreen con los menús
+        '/profile': (context) => ProfileScreen(), // Agrega ProfileScreen
       },
     );
   }

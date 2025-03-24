@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'package:uni_links/uni_links.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -21,12 +22,20 @@ class _LoginScreenState extends State<LoginScreen> {
   String? verifier;
   String challenge = '';
   StreamSubscription? _sub;
+  bool isLoading = false;
 
   @override
   void initState() {
     super.initState();
     setupLogin();
     _handleIncomingLinks();
+
+    Timer.periodic(Duration(minutes: 15), (timer) async {
+    if (await _isTokenExpiringSoon()) {
+      await _refreshAccessToken();
+    }
+  });
+
   }
 
   @override
@@ -60,8 +69,11 @@ class _LoginScreenState extends State<LoginScreen> {
         // Logs para verificar que el almacenamiento fue exitoso
         final storedState = await _storage.read(key: 'state');
         final storedVerifier = await _storage.read(key: 'verifier');
-        print('Estado almacenado: $storedState');
-        print('Verificador almacenado: $storedVerifier');
+        // print('Estado almacenado: $storedState');
+        // print('Verificador almacenado: $storedVerifier');
+    
+
+
       } else {
         print('Error: No se pudo generar el estado o el verificador.');
       }
@@ -70,66 +82,201 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _handleIncomingLinks() {
-    _sub = uriLinkStream.listen((Uri? uri) async {
-      if (uri != null && uri.toString().startsWith(redirectUri)) {
-        final code = uri.queryParameters['code'];
-        final receivedState = uri.queryParameters['state'];
-
-        // Logs para depuración
-        print('Callback URI recibido: $uri');
-        print('Código recibido: $code');
-        print('Estado recibido: $receivedState');
-
-        await _verifyAndExchangeCode(code, receivedState);
-      }
-    }, onError: (err) {
-      print('Error listening to links: $err');
-    });
-  }
-
-  Future<void> _verifyAndExchangeCode(String? code, String? receivedState) async {
-    try {
-      final storedState = await _storage.read(key: 'state');
+ void _handleIncomingLinks() {
+  _sub = uriLinkStream.listen((Uri? uri) async {
+    if (uri != null && uri.toString().startsWith(redirectUri)) {
+      final code = uri.queryParameters['code'];
+      final receivedState = uri.queryParameters['state'];
 
       // Logs para depuración
-      print('Estado almacenado para verificar: $storedState');
-      print('Estado recibido en el callback: $receivedState');
+      // print('Callback URI recibido: $uri');
+      // print('Código recibido: $code');
+      // print('Estado recibido: $receivedState');
 
-      if (code != null && receivedState == storedState) {
-        final params = {
-          'client_id': '27',
-          'redirect_uri': redirectUri,
-          'code_verifier': verifier ?? '',
-          'code': code,
-          'grant_type': 'authorization_code',
-        };
+      // Asegúrate de pasar el BuildContext correcto como tercer argumento
+      await _verifyAndExchangeCode(code, receivedState, context);
+    }
+  }, onError: (err) {
+    print('Error listening to links: $err');
+  });
+}
 
-        final response = await http.post(
-          Uri.parse(tokenUrl),
-          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-          body: params,
-        );
+ Future<void> _verifyAndExchangeCode(String? code, String? receivedState, BuildContext context) async {
+   setState(() => isLoading = true); // Activar preloader
+  try {
+    final storedState = await _storage.read(key: 'state');
 
-        if (response.statusCode == 200) {
-          final responseData = jsonDecode(response.body);
+    // print('Estado almacenado para verificar: $storedState');
+    // print('Estado recibido en el callback: $receivedState');
 
-          await _storage.write(key: 'access_token', value: responseData['access_token']);
-          await _storage.write(key: 'refresh_token', value: responseData['refresh_token']);
+    if (code != null && receivedState == storedState) {
+      final params = {
+        'client_id': '27',
+        'redirect_uri': redirectUri,
+        'code_verifier': verifier ?? '',
+        'code': code,
+        'grant_type': 'authorization_code',
+      };
 
-          print('Autenticación exitosa, tokens almacenados.');
-          print('token: ${responseData['access_token']}');
-          Navigator.pushReplacementNamed(context, '/logged_in_screen');
+      final response = await http.post(
+        Uri.parse(tokenUrl),
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: params,
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body);
+
+        // Extraer el token de acceso
+        String accessToken = responseData['access_token'];
+
+        print('Token completo:');
+        for (int i = 0; i < accessToken.length; i += 100) {
+          print(accessToken.substring(i, i + 100 > accessToken.length ? accessToken.length : i + 100));
+        }
+
+        // Guardar tokens en Secure Storage
+        await _storage.write(key: 'access_token', value: accessToken);
+        await _storage.write(key: 'refresh_token', value: responseData['refresh_token']);
+
+        // print('Autenticación exitosa, tokens almacenados.');
+
+        // Decodificar el token JWT
+        Map<String, dynamic> decodedToken = JwtDecoder.decode(accessToken);
+        // print('Token decodificado: $decodedToken');
+
+        // Guardar el email en almacenamiento seguro (No necesita verificación, ya que siempre llega)
+        String userEmail = decodedToken['email'];
+        await _storage.write(key: 'user_email', value: userEmail);
+        // print('Email guardado en almacenamiento seguro: $userEmail');
+
+        // Guardar el nombre completo en almacenamiento seguro
+        String fullName = decodedToken['nombre_completo'];
+        await _storage.write(key: 'user_full_name', value: fullName);
+        // print('Nombre completo guardado en almacenamiento seguro: $fullName');
+
+        // Extraer la imagen de perfil si existe
+        if (decodedToken.containsKey('photo') && decodedToken['photo'] != null) {
+          String photoUrl = decodedToken['photo'];
+          await _storage.write(key: 'user_photo', value: photoUrl);
+          // print('Foto de usuario guardada en almacenamiento seguro: $photoUrl');
         } else {
-          print('Error en la autenticación: ${response.statusCode} ${response.body}');
+          // print('No se encontró una foto en el token.');
+        }
+
+        // 🔹 Hacer solicitud a get-app-user-by-email 🔹
+        await _fetchUserIdByEmail(userEmail);
+
+        // Navegar a la pantalla principal
+        Navigator.pushReplacementNamed(context, '/home');
+      } else {
+        print('Error en la autenticación: ${response.statusCode} ${response.body}');
+      }
+    } else {
+      print('Error: Estado no coincide o falta el código.');
+    }
+  } catch (e) {
+    print('Error al verificar o intercambiar el código: $e');
+  }
+  finally {
+      setState(() => isLoading = false); // Desactivar preloader al finalizar
+    }
+}
+
+Future<bool> _isTokenExpiringSoon() async {
+  final accessToken = await _storage.read(key: 'access_token');
+  if (accessToken == null) return true; // Si no hay token, debe renovarse.
+
+  final decodedToken = JwtDecoder.decode(accessToken);
+  final expirationDate = JwtDecoder.getExpirationDate(accessToken);
+  final remainingTime = expirationDate.difference(DateTime.now());
+
+  return remainingTime.inMinutes < 5; // Si quedan menos de 5 min, renovar.
+}
+
+
+
+Future<void> _refreshAccessToken() async {
+  try {
+    final refreshToken = await _storage.read(key: 'refresh_token');
+    if (refreshToken == null) {
+      print('No se encontró el refresh_token. El usuario debe autenticarse de nuevo.');
+      return;
+    }
+
+    final response = await http.post(
+      Uri.parse(tokenUrl),
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: {
+        'client_id': '27',
+        'grant_type': 'refresh_token',
+        'refresh_token': refreshToken,
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final responseData = jsonDecode(response.body);
+      final newAccessToken = responseData['access_token'];
+      final newRefreshToken = responseData['refresh_token'];
+
+      await _storage.write(key: 'access_token', value: newAccessToken);
+      await _storage.write(key: 'refresh_token', value: newRefreshToken);
+
+      print('🔄 Token renovado exitosamente.');
+    } else {
+      print('❌ Error al renovar el token: ${response.statusCode} ${response.body}');
+    }
+  } catch (e) {
+    print('Error en _refreshAccessToken: $e');
+  }
+}
+
+
+/// 🔹 Función para obtener el ID del usuario mediante su email 🔹
+Future<void> _fetchUserIdByEmail(String email) async {
+  try {
+    final token = await _storage.read(key: 'access_token');
+
+    if (token == null) {
+      print('Error: No se encontró el token de autenticación.');
+      return;
+    }
+
+    final response = await http.post(
+      Uri.parse('https://somos-api-cms.qa.chileatiende.cl/api/mobile-app/get-app-user-by-email'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'email': email}),
+    );
+
+    print('Código de respuesta de get-app-user-by-email: ${response.statusCode}');
+    print('Respuesta completa: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final responseData = jsonDecode(response.body);
+
+      if (responseData['status'] == true && responseData['data'] != null) {
+        final appUser = responseData['data']['app_user'];
+        if (appUser != null && appUser['id'] != null) {
+          String userId = appUser['id'].toString();
+          await _storage.write(key: 'user_id', value: userId);
+          print('ID del usuario guardado en almacenamiento seguro: $userId');
+        } else {
+          print('No se encontró el ID del usuario en la respuesta.');
         }
       } else {
-        print('Error: Estado no coincide o falta el código.');
+        print('Error: Usuario no encontrado en la API.');
       }
-    } catch (e) {
-      print('Error al verificar o intercambiar el código: $e');
+    } else {
+      print('Error en la solicitud de usuario: Código ${response.statusCode}, Respuesta: ${response.body}');
     }
+  } catch (e) {
+    print('Error al obtener el ID del usuario: $e');
   }
+}
+
 
   Future<void> _launchAuthUrl() async {
     final authUrl = "https://auth.test.chileatiende.gob.cl/oauth/authorize"
@@ -153,25 +300,85 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
+ @override
+Widget build(BuildContext context) {
+  return Scaffold(
+    body: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20.0), // Padding para todo el contenido
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start, // Alinea todo a la izquierda
           children: <Widget>[
-            Text(
-              'Bienvenido, por favor inicie sesión.',
-              style: TextStyle(fontSize: 18),
+            Align(
+              alignment: Alignment.centerLeft, // Alinea la imagen a la izquierda
+              child: Image.asset(
+                'assets/images/logo.png',
+                height: 100,
+              ),
             ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _launchAuthUrl,
-              child: Text('Iniciar sesión con Active Directory'),
+            const SizedBox(height: 20),
+            const Text(
+              'Bienvenid@ al Portal interno\n de IPS ChileAtiende',
+              textAlign: TextAlign.left,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
+            const SizedBox(height: 10),
+            const Text(
+              'Si eres funcionari@ y quieres mantenerte informado\n'
+              'sobre todo lo que está pasando en nuestra institución.',
+              textAlign: TextAlign.left,
+              style: TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 20),
+           
+        Align(
+              alignment: Alignment.centerLeft, // Alinea el botón a la izquierda
+              child: isLoading
+                    ? Container(
+                        width: 320,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          borderRadius: BorderRadius.zero,
+                        ),
+                        child: const Center(
+                          child: CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        ),
+                      )
+                      :ElevatedButton(
+                onPressed: () async {
+                  _launchAuthUrl();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 15), // Ajusta el espacio interno del botón
+                  minimumSize: const Size(250, 50), // Ancho mínimo de 200px, alto de 50px
+                  fixedSize: const Size(320, 60), // Tamaño fijo de 250px de ancho y 60px de alto
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.zero, // Bordes cuadrados
+                  ),
+                ),
+                child: const Text(
+                  'Ingresar',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+
+                    const SizedBox(height: 20),
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
