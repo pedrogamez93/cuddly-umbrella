@@ -34,20 +34,20 @@ class _LikesScreenState extends State<LikesScreen> {
     final response = await http.get(
       Uri.parse(apiUrl),
       headers: {
-        'Authorization': 'Bearer $token', // Asegúrate de que el token sea correcto
+        'Authorization': 'Bearer $token', 
         'Content-Type': 'application/json',
       },
     );
 
     print('Código de respuesta: ${response.statusCode}');
-    print('Respuesta del servidor: ${response.body}'); // 👀 Verifica la estructura de la respuesta
+    print('Respuesta del servidor: ${response.body}'); 
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
 
-      if (data.containsKey('data')) { // Cambiado de "likes" a "data"
+      if (data.containsKey('data')) { 
         setState(() {
-          likes = data['data'];  // Usar la clave correcta
+          likes = data['data'];  
           isLoading = false;
           hasError = false;
         });

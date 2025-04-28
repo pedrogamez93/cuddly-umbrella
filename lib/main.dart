@@ -1,18 +1,24 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:developer';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:ips_app_chileatiende/screens/logged_in_screen.dart';
 import 'package:ips_app_chileatiende/screens/login_screen.dart';
-import 'package:ips_app_chileatiende/widgets/base_screen.dart'; // Importa BaseScreen
-import 'dart:developer';
 import 'package:ips_app_chileatiende/screens/profile_screen.dart';
+import 'package:ips_app_chileatiende/widgets/base_screen.dart';
 
 void main() {
-  // Configura HttpOverrides para ignorar verificación SSL
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: [SystemUiOverlay.bottom],
+  );
   HttpOverrides.global = MyHttpOverrides();
-  
-
   runZonedGuarded(() {
     runApp(MyApp());
   }, (error, stackTrace) {
@@ -35,15 +41,23 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Flutter Auth',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: Colors.white,
+        appBarTheme: AppBarTheme(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 1,
+          iconTheme: IconThemeData(color: Colors.black),
+          titleTextStyle: TextStyle(color: Colors.black, fontSize: 18),
+        ),
       ),
-      debugShowCheckedModeBanner: false,
-      initialRoute: '/', // Pantalla inicial es LoginScreen
+      initialRoute: '/',
       routes: {
-        '/': (context) => LoginScreen(), // LoginScreen independiente
-        '/home': (context) => BaseScreen(), // BaseScreen con los menús
-        '/profile': (context) => ProfileScreen(), // Agrega ProfileScreen
+        '/': (context) => LoginScreen(),
+        '/home': (context) => BaseScreen(),
+        '/profile': (context) => ProfileScreen(),
       },
     );
   }

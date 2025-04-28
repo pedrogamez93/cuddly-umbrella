@@ -12,34 +12,29 @@ class AuthService {
   final String authUrl = 'https://auth.test.chileatiende.gob.cl/oauth/authorize';
   final String tokenUrl = 'https://auth.test.chileatiende.gob.cl/oauth/token';
 
-  // Genera una cadena aleatoria
   String createRandomString(int length) {
     final random = Random.secure();
     final values = List<int>.generate(length, (i) => random.nextInt(256));
     return base64UrlEncode(values).substring(0, length);
   }
 
-  // Genera el código de desafío SHA256
   Future<String> generateCodeChallenge(String verifier) async {
     var bytes = utf8.encode(verifier);
     var digest = sha256.convert(bytes);
     return base64UrlEncode(digest.bytes).replaceAll('=', '');
   }
-
-  // Almacena el estado y verificador
+  
   Future<void> storeStateAndVerifier(String state, String verifier) async {
     await _storage.write(key: 'state', value: state);
     await _storage.write(key: 'verifier', value: verifier);
   }
 
-  // Construir la URL de autenticación
   String buildAuthUrl(String state, String challenge) {
     return '$authUrl?client_id=$clientId&redirect_uri=$redirectUri'
            '&response_type=code&scope=*&state=$state'
            '&code_challenge=$challenge&code_challenge_method=S256';
   }
 
-  // Redirigir al navegador para una URL específica
   Future<void> launchAuthUrl(String authUrl) async {
     final Uri url = Uri.parse(authUrl);
     if (await canLaunchUrl(url)) {
@@ -48,8 +43,7 @@ class AuthService {
       throw 'Could not launch $authUrl';
     }
   }
-
-  // Intercambio de tokens
+  
   Future<void> exchangeCodeForToken(String code) async {
     final verifier = await _storage.read(key: 'verifier');
 
@@ -68,8 +62,6 @@ class AuthService {
       final responseData = jsonDecode(response.body);
       final accessToken = responseData['access_token'];
       final refreshToken = responseData['refresh_token'];
-
-      // Almacenar tokens de forma segura
       await _storage.write(key: 'access_token', value: accessToken);
       await _storage.write(key: 'refresh_token', value: refreshToken);
     } else {
