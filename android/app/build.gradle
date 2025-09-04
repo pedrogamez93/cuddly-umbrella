@@ -1,52 +1,81 @@
 plugins {
     id "com.android.application"
     id "kotlin-android"
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // El plugin de Flutter debe ir después de Android y Kotlin
     id "dev.flutter.flutter-gradle-plugin"
 }
 
 android {
     namespace = "com.example.ips_app_chileatiende"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
+    kotlinOptions { jvmTarget = JavaVersion.VERSION_1_8 }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8
+    defaultConfig {
+        applicationId = "com.example.ips_app_chileatiende"
+        minSdk = 24
+        targetSdk = 34
+
+        versionCode flutter.versionCode
+        versionName flutter.versionName
+
+        manifestPlaceholders = [
+            appAuthRedirectScheme: "com.example.ips_app_chileatiende"
+        ]
     }
 
-defaultConfig {
-    // Especifica tu propio Application ID.
-    applicationId = "com.example.ips_app_chileatiende"
-    
-    // Especifica las versiones de SDK que tu aplicación soportará.
-    minSdkVersion flutter.minSdkVersion
-    targetSdkVersion flutter.targetSdkVersion
-    
-    // Configura la versión de la aplicación.
-    versionCode flutter.versionCode
-    versionName flutter.versionName
-    
-    // Define placeholders para las URIs de redirección de autenticación.
-    manifestPlaceholders = [
-        'appAuthRedirectScheme': 'com.example.ips_app_chileatiende'
-    ]
-}
+    // ---- Firma de RELEASE con key.properties ----
+    signingConfigs {
+        release {
+            def props = new Properties()
+            def f = rootProject.file("key.properties")
+            if (f.exists()) {
+                props.load(new FileInputStream(f))
+                storeFile     = file(props["storeFile"])
+                storePassword = props["storePassword"]
+                keyAlias      = props["keyAlias"]
+                keyPassword   = props["keyPassword"]
 
+                // Solo v1/v2 (tu AGP no soporta v3/v4 setters)
+                v1SigningEnabled false   // pon false si tu minSdk >= 24
+                v2SigningEnabled true
+            } else {
+                println("WARNING: key.properties no encontrado. El build RELEASE fallará al firmar.")
+            }
+        }
+    }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.debug
+            debuggable false
+            signingConfig = signingConfigs.release
+
+            // R8 + shrink (si algo falla, desactiva temporalmente minify/shrink)
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                          'proguard-rules.pro'
+        }
+        debug {
+            // usa firma debug por defecto
         }
     }
 }
 
-flutter {
-    source = "../.."
+flutter { source = "../.."
+
+}
+
+dependencies {
+    // Play Core para clases SplitInstall referenciadas por Flutter (evita “Missing class … SplitInstall*”)
+    implementation 'com.google.android.play:core:1.10.3'
+
+    // Anotaciones para evitar warnings/errores de R8 por libs
+    implementation 'com.google.code.findbugs:jsr305:3.0.2'
+    implementation 'com.google.errorprone:error_prone_annotations:2.23.0'
 }
