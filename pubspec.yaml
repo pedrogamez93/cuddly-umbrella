@@ -45,6 +45,7 @@ dependencies:
   jwt_decoder: ^2.0.1
   carousel_slider: ^5.0.0
   timeago: ^3.7.0
+  video_player: ^2.8.2
   flutter_native_splash: ^2.4.4
   flutter_launcher_icons: ^0.14.3
 

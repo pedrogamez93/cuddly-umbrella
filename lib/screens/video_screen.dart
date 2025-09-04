@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:ips_app_chileatiende/screens/video_player_screen.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ips_app_chileatiende/screens/logged_in_screen.dart';
 import 'package:ips_app_chileatiende/screens/profile_screen.dart';
@@ -199,12 +200,16 @@ class _VideoScreenState extends State<VideoScreen> {
                       child: ListTile(
                         title: Text(v.title),
                         subtitle: Text(v.url),
-                        onTap: () async {
-                          final uri = Uri.parse(v.url);
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri,
-                                mode: LaunchMode.externalApplication);
-                          }
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VideoPlayerScreen(
+                                url: v.url,
+                                title: v.title,
+                              ),
+                            ),
+                          );
                         },
                       ),
                     );
