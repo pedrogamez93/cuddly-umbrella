@@ -7,6 +7,10 @@ import 'package:ips_app_chileatiende/screens/logged_in_screen.dart';
 import 'package:ips_app_chileatiende/screens/profile_screen.dart';
 import 'package:ips_app_chileatiende/screens/saved_news_screen.dart';
 import 'package:ips_app_chileatiende/screens/podcast_screen.dart';
+
+import 'package:ips_app_chileatiende/widgets/video_player_page.dart';
+
+
 class VideoInfo {
   final String url;
   final String title;
@@ -197,15 +201,16 @@ class _VideoScreenState extends State<VideoScreen> {
                     return Card(
                       margin: const EdgeInsets.all(8),
                       child: ListTile(
-                        title: Text(v.title),
-                        subtitle: Text(v.url),
-                        onTap: () async {
-                          final uri = Uri.parse(v.url);
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri,
-                                mode: LaunchMode.externalApplication);
-                          }
-                        },
+                         title: Text(v.title),
+                        // subtitle: Text(v.url),
+                        onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => VideoPlayerPage(url: v.url, title: v.title),
+                          ),
+                        );
+                      },
                       ),
                     );
                   }).toList(),

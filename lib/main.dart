@@ -9,9 +9,27 @@ import 'package:ips_app_chileatiende/screens/login_screen.dart';
 import 'package:ips_app_chileatiende/screens/profile_screen.dart';
 import 'package:ips_app_chileatiende/widgets/base_screen.dart';
 
+// 👇 IMPORTA la pantalla de notificaciones
+import 'package:ips_app_chileatiende/screens/notifications_page.dart';
+
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'services/local_notifications.dart'; 
+
+
+// 👇 EMAIL por --dart-define (con fallback para pruebas)
+const kDefaultUserEmail = String.fromEnvironment(
+  'USER_EMAIL',
+  defaultValue: 'pgamezc.srv@chileatiende.cl',
+);
+
 void main() async {
   // Inicializa bindings en la MISMA zona en la que luego llamas runApp.
   WidgetsFlutterBinding.ensureInitialized();
+
+  
+  await dotenv.load(fileName: ".env");
+
+  await LocalNotifs.init(); // <— AÑADE ESTO
 
   // Manejo global de errores (recomendado en Web en lugar de runZonedGuarded)
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -43,6 +61,8 @@ void main() async {
     // }
   }
 
+
+
   runApp(const MyApp());
 }
 
@@ -71,6 +91,16 @@ class MyApp extends StatelessWidget {
         '/': (_) => const LoginScreen(),
         '/home': (_) => BaseScreen(),
         '/profile': (_) => ProfileScreen(),
+
+        // 👇 Rutas nuevas para notificaciones
+        '/notifications': (_) => const NotificationsPage(
+              userEmail: kDefaultUserEmail,
+              onlyUnread: false,
+            ),
+        '/notifications/unread': (_) => const NotificationsPage(
+              userEmail: kDefaultUserEmail,
+              onlyUnread: true,
+            ),
       },
     );
   }

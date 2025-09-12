@@ -11,13 +11,21 @@ import 'package:ips_app_chileatiende/screens/login_screen.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'package:url_launcher/url_launcher.dart';
+
+import '../services/appsync_ws.dart';
+// (opcional) si quieres banner nativo:
+import '../services/local_notifications.dart';
+
+
 class LoggedInScreen extends StatefulWidget {
+   const LoggedInScreen({super.key});
   @override
   _LoggedInScreenState createState() => _LoggedInScreenState();
 }
 
 class _LoggedInScreenState extends State<LoggedInScreen> {
   final _storage = FlutterSecureStorage();
+  AppSyncWS? _ws;
   List<Map<String, dynamic>> posts = [];
   bool _isLoading = true;
   Map<int, bool> likedPosts = {};
@@ -32,15 +40,18 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
   @override
   void initState() {
     super.initState();
+    _bootstrap();
     timeago.setLocaleMessages('es', timeago.EsMessages());
     _loadAccessToken();
     _scrollController.addListener(_onScroll);
+    
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
+     _ws?.dispose();
   }
   void _onScroll() {
     final threshold = 300; // px antes de llegar al final
@@ -51,6 +62,40 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
       _fetchMorePosts();
     }
   }
+
+  Future<void> _bootstrap() async {
+    // 1) Obtén email del usuario
+    final token = await _storage.read(key: 'auth_token');
+    String? email;
+    if (token != null && token.isNotEmpty) {
+      final claims = JwtDecoder.decode(token);
+      email = (claims['email'] ?? claims['user_email'] ?? claims['upn'])?.toString();
+    }
+    email ??= await _storage.read(key: 'user_email');
+    if (email == null) return;
+
+    // 2) Conecta WS (usa tus valores reales)
+    _ws = AppSyncWS(
+      wssUrl: 'wss://notificaciones-somos-wss.qa.chileatiende.cl/graphql/realtime',
+      host: 'avnaqxexqvabxdndyro3w42zfi.appsync-api.us-east-1.amazonaws.com',
+      apiKey: '<APP_SYNC_API_KEY_QA>',
+      onNotification: (notif) async {
+        if (!mounted) return;
+        // UI rápida
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('🔔 ${notif['title'] ?? 'Notificación'}')),
+        );
+        // Opcional: notificación local
+        // await LocalNotifs.show(notif);
+        // TODO: navegar con notif['targetUrl'] o ['targetId'] si existe
+      },
+    );
+
+    await _ws!.connectAndSubscribe(userEmail: email);
+  }
+
+
+
   Future<void> _fetchMorePosts() async {
     _isFetchingMore = true;
     _currentPage += 1;

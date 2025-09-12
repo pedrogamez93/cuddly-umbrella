@@ -150,6 +150,13 @@ class _BaseScreenState extends State<BaseScreen> {
         ),
         backgroundColor: Colors.white,
         elevation: 2,
+        actions: [
+          IconButton(
+            tooltip: 'Notificaciones',
+            icon: const Icon(Icons.notifications_none),
+            onPressed: () => Navigator.pushNamed(context, '/notifications'),
+          ),
+        ],
       ),
       endDrawer: Drawer(
         child: Column(
