@@ -1,3 +1,4 @@
+// lib/screens/recent_notifications_page.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -19,19 +20,14 @@ import '../widgets/base_screen.dart';
 
 final _storage = FlutterSecureStorage();
 
-class NotificationsPage extends StatefulWidget {
-  const NotificationsPage({
-    super.key,
-    this.onlyUnread = false,
-  });
-
-  final bool onlyUnread;
+class RecentNotificationsPage extends StatefulWidget {
+  const RecentNotificationsPage({super.key});
 
   @override
-  State<NotificationsPage> createState() => _NotificationsPageState();
+  State<RecentNotificationsPage> createState() => _RecentNotificationsPageState();
 }
 
-class _NotificationsPageState extends State<NotificationsPage> {
+class _RecentNotificationsPageState extends State<RecentNotificationsPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // --- Header / Drawer ---
@@ -40,18 +36,15 @@ class _NotificationsPageState extends State<NotificationsPage> {
   List<dynamic> _menuItems = [];
   bool _isLoadingMenu = true;
 
-  // --- Notificaciones (estado) ---
+  // --- Notificaciones ---
   late final NotificationsApi _api = NotificationsApi(
     endpoint: dotenv.env['APPSYNC_HTTP_URL'] ?? '',
     apiKey: dotenv.env['APPSYNC_API_KEY'] ?? '',
   );
 
   bool _loading = true;
+  static const int _limit = 10;
   List<NotificationItem> _items = [];
-
-  // paginación visual
-  static const int _perPage = 8;
-  int _page = 1;
 
   // bottom nav
   int _bottomIndex = 0;
@@ -97,7 +90,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
           _isLoadingMenu = false;
         });
       } else {
-        throw Exception('Error al cargar los elementos del menú: ${response.statusCode}');
+        throw Exception('Error al cargar el menú: ${response.statusCode}');
       }
     } catch (e) {
       debugPrint('Error menú: $e');
@@ -116,11 +109,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
         });
         return;
       }
-      final list = await _api.fetch(userEmail: email, onlyUnread: widget.onlyUnread);
-      setState(() {
-        _items = list;
-        _page = 1;
-      });
+
+      // Trae todas y deja solo las 10 más recientes (por timestamp).
+      final list = await _api.fetch(userEmail: email, onlyUnread: false);
+      list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      setState(() => _items = list.take(_limit).toList());
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -136,12 +129,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
       final email = (_userEmail ?? '').trim();
       if (email.isEmpty || email == 'No disponible') return;
       await _api.markAllAsViewed(email);
-      // Optimista: marcar en memoria
+      // Optimista: marcar las visibles como vistas
       setState(() {
         _items = _items.map((n) => n.copyWith(viewed: true, viewedAt: DateTime.now())).toList();
-        if (widget.onlyUnread) {
-          _items = [];
-        }
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
@@ -149,13 +139,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _markViewedOne(NotificationItem n) async {
-    // actualizar UI optimista
     _applyOptimisticViewed(n.id);
     try {
       await _api.markNotificationAsViewed(n.id);
-      // nada más — ya quedó optimista
     } catch (e) {
-      // rollback si quieres (opcional)
       await _load();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
@@ -165,11 +152,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     setState(() {
       final idx = _items.indexWhere((e) => e.id == id);
       if (idx >= 0) {
-        final updated = _items[idx].copyWith(viewed: true, viewedAt: DateTime.now());
-        _items[idx] = updated;
-      }
-      if (widget.onlyUnread) {
-        _items.removeWhere((e) => e.id == id);
+        _items[idx] = _items[idx].copyWith(viewed: true, viewedAt: DateTime.now());
       }
     });
   }
@@ -183,7 +166,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => BaseScreen()));
       }
     } else if (index == 1) {
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => SavedNewsScreen()));
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const SavedNewsScreen()));
     } else if (index == 2) {
       Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ProfileScreen()));
     }
@@ -198,12 +181,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
-    // paging
-    final pageCount = (_items.length / _perPage).ceil().clamp(1, 9999);
-    _page = _page.clamp(1, pageCount);
-    final start = (_page - 1) * _perPage;
-    final visible = _items.skip(start).take(_perPage).toList();
 
     return Scaffold(
       key: _scaffoldKey,
@@ -232,7 +209,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         ],
       ),
 
-      endDrawer: _DrawerMenu(
+      endDrawer: _DrawerMenuRecent(
         fullName: _fullName,
         userEmail: _userEmail,
         isLoadingMenu: _isLoadingMenu,
@@ -273,15 +250,39 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(widget.onlyUnread ? 'No leídas' : 'Todas las Notifcaciones',
-                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 8),
+
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Notificaciones recientes',
+                                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pushNamed(context, '/notifications'),
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: Text(
+                                  'Ver todas',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+
                         Expanded(
                           child: ListView.separated(
-                            itemCount: visible.length,
+                            itemCount: _items.length, // solo 10
                             separatorBuilder: (_, __) => const Divider(height: 1, thickness: 0.6),
                             itemBuilder: (_, i) {
-                              final n = visible[i];
+                              final n = _items[i];
                               return _NotificationRow(
                                 title: n.title.isEmpty ? '(Sin título)' : n.title,
                                 message: n.message,
@@ -292,12 +293,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                             },
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        _PagingBar(
-                          page: _page,
-                          pageCount: pageCount,
-                          onChange: (p) => setState(() => _page = p),
-                        ),
+                        // SIN paginación aquí
                       ],
                     ),
                   ),
@@ -316,9 +312,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 }
 
-// ------------- Drawer -------------
-class _DrawerMenu extends StatelessWidget {
-  const _DrawerMenu({
+// -------- Drawer específico para la vista de recientes --------
+class _DrawerMenuRecent extends StatelessWidget {
+  const _DrawerMenuRecent({
     required this.fullName,
     required this.userEmail,
     required this.isLoadingMenu,
@@ -373,12 +369,22 @@ class _DrawerMenu extends StatelessWidget {
                 ? const Center(child: CircularProgressIndicator())
                 : ListView(
                     children: [
+                      // acceso a la lista completa
                       ListTile(
                         leading: const Icon(Icons.notifications_none, color: Colors.white),
-                        title: const Text('Notificaciones', style: TextStyle(color: Colors.white)),
+                        title: const Text('Notificaciones (todas)', style: TextStyle(color: Colors.white)),
                         onTap: () {
                           Navigator.pop(context);
                           Navigator.pushNamed(context, '/notifications');
+                        },
+                      ),
+                      // acceso a recientes
+                      ListTile(
+                        leading: const Icon(Icons.fiber_new, color: Colors.white),
+                        title: const Text('Notificaciones recientes', style: TextStyle(color: Colors.white)),
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.pushNamed(context, '/notifications/recent');
                         },
                       ),
                       const Divider(height: 1, color: Colors.white24),
@@ -428,7 +434,7 @@ class _DrawerMenu extends StatelessWidget {
   }
 }
 
-// ------------- Ítem de lista -------------
+// --------- Ítem de lista (idéntico al de notifications_page.dart, sin cambios) ---------
 class _NotificationRow extends StatelessWidget {
   const _NotificationRow({
     required this.title,
@@ -510,52 +516,6 @@ class _NotificationRow extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-// ------------- Paginación -------------
-class _PagingBar extends StatelessWidget {
-  const _PagingBar({required this.page, required this.pageCount, required this.onChange});
-  final int page;
-  final int pageCount;
-  final ValueChanged<int> onChange;
-
-  List<int> _pagesToShow() {
-    if (pageCount <= 6) return List.generate(pageCount, (i) => i + 1);
-    final set = <int>{1, pageCount, page - 1, page, page + 1}..removeWhere((p) => p < 1 || p > pageCount);
-    final list = set.toList()..sort();
-    return list;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final nums = _pagesToShow();
-
-    Widget number(int n) {
-      final isActive = n == page;
-      return InkWell(
-        onTap: () => onChange(n),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Text(
-            '$n',
-            style: TextStyle(
-              decoration: isActive ? TextDecoration.underline : TextDecoration.none,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(visualDensity: VisualDensity.compact, onPressed: page > 1 ? () => onChange(page - 1) : null, icon: const Icon(Icons.chevron_left)),
-        ...nums.map(number),
-        IconButton(visualDensity: VisualDensity.compact, onPressed: page < pageCount ? () => onChange(page + 1) : null, icon: const Icon(Icons.chevron_right)),
-      ],
     );
   }
 }

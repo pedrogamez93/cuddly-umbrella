@@ -75,7 +75,7 @@ class _BaseScreenState extends State<BaseScreen> {
         throw Exception('Error al cargar los elementos del menú: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error: $e');
+      debugPrint('Error: $e');
       setState(() {
         _isLoadingMenu = false;
       });
@@ -88,7 +88,7 @@ class _BaseScreenState extends State<BaseScreen> {
       String? userId = await _storage.read(key: 'user_id');
 
       if (token == null || userId == null) {
-        print("Error: No se encontró el token o el ID de usuario.");
+        debugPrint("Error: No se encontró el token o el ID de usuario.");
         return;
       }
 
@@ -111,10 +111,10 @@ class _BaseScreenState extends State<BaseScreen> {
           MaterialPageRoute(builder: (context) => LoginScreen()),
         );
       } else {
-        print(" Error al cerrar sesión: ${response.body}");
+        debugPrint(" Error al cerrar sesión: ${response.body}");
       }
     } catch (e) {
-      print(" Excepción al cerrar sesión: $e");
+      debugPrint(" Excepción al cerrar sesión: $e");
     }
   }
 
@@ -150,11 +150,17 @@ class _BaseScreenState extends State<BaseScreen> {
         ),
         backgroundColor: Colors.white,
         elevation: 2,
+        iconTheme: const IconThemeData(color: Colors.black),
         actions: [
           IconButton(
             tooltip: 'Notificaciones',
             icon: const Icon(Icons.notifications_none),
-            onPressed: () => Navigator.pushNamed(context, '/notifications'),
+            onPressed: () => Navigator.pushNamed(context, '/notifications/recent'),
+          ),
+          IconButton(
+            tooltip: 'Menú',
+            icon: const Icon(Icons.menu),
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
           ),
         ],
       ),
@@ -205,62 +211,75 @@ class _BaseScreenState extends State<BaseScreen> {
                 color: const Color(0xFF0F69B4),
                 child: _isLoadingMenu
                     ? const Center(child: CircularProgressIndicator())
-                    : ListView.builder(
-                        itemCount: _menuItems.length,
-                        itemBuilder: (context, index) {
-                          final item = _menuItems[index];
-                          String? endpoint = item['endpoint'];
-                          String? iconUrl = item['icon'];
-                          String assetPath = 'assets/images/${iconUrl ?? "assets/images/news.png"}.png';
-
-                          return ListTile(
-                            leading: SizedBox(
-                              width: 25,
-                              height: 25,
-                              child: Image.asset(
-                                assetPath,
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Image.asset(
-                                    'assets/images/news.png',
-                                    fit: BoxFit.contain,
-                                  );
-                                },
-                              ),
-                            ),
-                            title: Text(item['title'] ?? 'Sin título'),
-                            textColor: Colors.white,
+                    : ListView(
+                        children: [
+                          // Ítem fijo: Notificaciones
+                          ListTile(
+                            leading: const Icon(Icons.notifications_none, color: Colors.white),
+                            title: const Text('Notificaciones', style: TextStyle(color: Colors.white)),
                             onTap: () {
                               Navigator.pop(context);
-                              if (endpoint != null && endpoint.isNotEmpty) {
-                                final endLower = endpoint.toLowerCase();
-
-                                if (endLower == 'home' || endLower == 'inicio') {
-                                  setState(() {
-                                    _selectedEndpoint = null;
-                                    _currentIndex = 0;
-                                  });
-                                } else if (endLower == 'podcast') {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(builder: (context) => const PodcastScreen()),
-                                  );
-                                } else if (endLower == 'videos') {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(builder: (context) => const VideoScreen()),
-                                  );
-                                } else {
-                                  setState(() {
-                                    _selectedEndpoint = endpoint;
-                                  });
-                                }
-                              } else {
-                                print('No se encontró un endpoint para este ítem.');
-                              }
+                              Navigator.pushNamed(context, '/notifications');
                             },
-                          );
-                        },
+                          ),
+                          const Divider(height: 1, color: Colors.white24),
+
+                          // Ítems dinámicos desde el API
+                          ...List.generate(_menuItems.length, (index) {
+                            final item = _menuItems[index];
+                            final String? endpoint = item['endpoint'];
+                            final String? iconUrl = item['icon'];
+                            final String assetPath = 'assets/images/${iconUrl ?? "news"}.png';
+                            final String title =
+                                ((item['title'] as String?)?.trim().isNotEmpty ?? false)
+                                    ? item['title']
+                                    : 'Sin título';
+
+                            return ListTile(
+                              leading: SizedBox(
+                                width: 25,
+                                height: 25,
+                                child: Image.asset(
+                                  assetPath,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Image.asset('assets/images/news.png', fit: BoxFit.contain);
+                                  },
+                                ),
+                              ),
+                              title: Text(title, style: const TextStyle(color: Colors.white)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                if (endpoint != null && endpoint.isNotEmpty) {
+                                  final endLower = endpoint.toLowerCase();
+
+                                  if (endLower == 'home' || endLower == 'inicio') {
+                                    setState(() {
+                                      _selectedEndpoint = null;
+                                      _currentIndex = 0;
+                                    });
+                                  } else if (endLower == 'podcast') {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const PodcastScreen()),
+                                    );
+                                  } else if (endLower == 'videos') {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const VideoScreen()),
+                                    );
+                                  } else {
+                                    setState(() {
+                                      _selectedEndpoint = endpoint;
+                                    });
+                                  }
+                                } else {
+                                  debugPrint('No se encontró un endpoint para este ítem.');
+                                }
+                              },
+                            );
+                          }),
+                        ],
                       ),
               ),
             ),

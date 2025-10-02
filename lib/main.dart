@@ -7,31 +7,19 @@ import 'package:flutter/services.dart';
 
 import 'package:ips_app_chileatiende/screens/login_screen.dart';
 import 'package:ips_app_chileatiende/screens/profile_screen.dart';
+import 'package:ips_app_chileatiende/screens/recent_notifications_page.dart';
 import 'package:ips_app_chileatiende/widgets/base_screen.dart';
-
-// 👇 IMPORTA la pantalla de notificaciones
-import 'package:ips_app_chileatiende/screens/notifications_page.dart';
+import 'package:ips_app_chileatiende/screens/notifications_page.dart'; // ← notificaciones
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'services/local_notifications.dart'; 
-
-
-// 👇 EMAIL por --dart-define (con fallback para pruebas)
-const kDefaultUserEmail = String.fromEnvironment(
-  'USER_EMAIL',
-  defaultValue: 'pgamezc.srv@chileatiende.cl',
-);
+import 'services/local_notifications.dart';
 
 void main() async {
-  // Inicializa bindings en la MISMA zona en la que luego llamas runApp.
   WidgetsFlutterBinding.ensureInitialized();
 
-  
   await dotenv.load(fileName: ".env");
+  await LocalNotifs.init();
 
-  await LocalNotifs.init(); // <— AÑADE ESTO
-
-  // Manejo global de errores (recomendado en Web en lugar de runZonedGuarded)
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
     developer.log(
@@ -43,25 +31,17 @@ void main() async {
   };
   ui.PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
     developer.log('Uncaught platform error', name: 'main', error: error, stackTrace: stack);
-    return true; // evita relanzar
+    return true;
   };
 
-  // Ajustes de UI solo para plataformas no-Web
   if (!kIsWeb) {
     await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     await SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.manual,
       overlays: [SystemUiOverlay.bottom],
     );
-
-    // ⚠️ Si en QA necesitas ignorar certificados inválidos,
-    // crea un helper con import condicional y actívalo solo en dev:
-    // if (!kReleaseMode) {
-    //   http_overrides.setupBadCertHttpOverrides();
-    // }
+    // if (!kReleaseMode) { http_overrides.setupBadCertHttpOverrides(); }
   }
-
-
 
   runApp(const MyApp());
 }
@@ -91,16 +71,10 @@ class MyApp extends StatelessWidget {
         '/': (_) => const LoginScreen(),
         '/home': (_) => BaseScreen(),
         '/profile': (_) => ProfileScreen(),
-
-        // 👇 Rutas nuevas para notificaciones
-        '/notifications': (_) => const NotificationsPage(
-              userEmail: kDefaultUserEmail,
-              onlyUnread: false,
-            ),
-        '/notifications/unread': (_) => const NotificationsPage(
-              userEmail: kDefaultUserEmail,
-              onlyUnread: true,
-            ),
+        // 👇 Ahora usa SIEMPRE el email del usuario logueado (SecureStorage/JWT)
+        '/notifications': (_) => const NotificationsPage(onlyUnread: false),
+        '/notifications/unread': (_) => const NotificationsPage(onlyUnread: true),
+        '/notifications/recent': (context) => const RecentNotificationsPage(),
       },
     );
   }

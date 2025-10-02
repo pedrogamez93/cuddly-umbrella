@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class AppSyncWS {
   AppSyncWS({
@@ -10,34 +11,38 @@ class AppSyncWS {
     this.onNotification,
   });
 
-  final String wssUrl; // ej: wss://notificaciones-somos-wss.qa.chileatiende.cl/graphql/realtime
-  final String host;   // ej: avnaqxexqvabxdndyro3w42zfi.appsync-api.us-east-1.amazonaws.com
-  final String apiKey; // ej: da2-xxxxx (QA)
+  final String wssUrl; // wss://notificaciones-somos-wss.qa.chileatiende.cl/graphql/realtime
+  final String host;   // avnaqxexqvabxdndyro3w42zfi.appsync-api.us-east-1.amazonaws.com
+  final String apiKey; // da2-xxxxx (QA)
   final void Function(Map<String, dynamic>)? onNotification;
 
   WebSocket? _ws;
   Timer? _kaTimer;
   String? _subId;
+  String? _lastEmail;
+  final _storage = const FlutterSecureStorage();
 
   bool get isOpen => _ws != null && _ws!.readyState == WebSocket.open;
 
-  Future<void> connectAndSubscribe({required String userEmail}) async {
+  Future<void> connectAndSubscribe({String? userEmail}) async {
+    final email = (userEmail ?? await _storage.read(key: 'user_email'))?.trim();
+    if (email == null || email.isEmpty) {
+      throw Exception('No se encontró USER_EMAIL del usuario logueado.');
+    }
+    _lastEmail = email;
+
     await _open();
     await _connectionInit();
-    await _startSubscription(userEmail: userEmail);
+    await _startSubscription(userEmail: email);
   }
 
   Future<void> _open() async {
     final headers = {'host': host, 'x-api-key': apiKey};
-    final enc = base64Url
-        .encode(utf8.encode(jsonEncode(headers)))
-        .replaceAll('=', '');
-
+    final enc = base64Url.encode(utf8.encode(jsonEncode(headers))).replaceAll('=', '');
     _ws = await WebSocket.connect(
       wssUrl,
       protocols: ['header-$enc', 'graphql-ws'],
     );
-
     _ws!.listen(_onMessage, onError: _onError, onDone: _onDone);
   }
 
@@ -53,18 +58,8 @@ class AppSyncWS {
     const query = r'''
       subscription OnNewNotification($userEmail: String!) {
         onNewNotification(userEmail: $userEmail) {
-          id
-          title
-          message
-          timestamp
-          viewed
-          viewedAt
-          deleted
-          deletedAt
-          # (si backend lo agrega)
-          targetType
-          targetId
-          targetUrl
+          id title message timestamp viewed viewedAt deleted deletedAt
+          targetType targetId targetUrl
         }
       }
     ''';
@@ -86,9 +81,7 @@ class AppSyncWS {
     final msg = jsonDecode(data as String) as Map<String, dynamic>;
     switch (msg['type']) {
       case 'connection_ack':
-        _armKeepAlive();
-        break;
-      case 'ka': // keep-alive
+      case 'ka':
         _armKeepAlive();
         break;
       case 'data':
@@ -98,22 +91,17 @@ class AppSyncWS {
         if (notif != null) onNotification?.call(notif);
         break;
       case 'error':
-        // imprime errores de GraphQL
         // ignore: avoid_print
         print('GraphQL error: ${msg['payload']}');
         break;
       case 'complete':
-        // suscripción cerrada por el server
         break;
     }
   }
 
   void _armKeepAlive() {
     _kaTimer?.cancel();
-    _kaTimer = Timer(const Duration(seconds: 90), () {
-      // si no llega keep-alive en 90s, reinicia
-      _reconnect();
-    });
+    _kaTimer = Timer(const Duration(seconds: 90), _reconnect);
   }
 
   void _onError(Object e) {
@@ -122,20 +110,24 @@ class AppSyncWS {
     _reconnect();
   }
 
-  void _onDone() {
-    _reconnect();
-  }
+  void _onDone() => _reconnect();
 
   Future<void> _reconnect() async {
     _kaTimer?.cancel();
-    try {
-      await _ws?.close();
-    } catch (_) {}
+    try { await _ws?.close(); } catch (_) {}
     _ws = null;
-    // backoff simple
     await Future.delayed(const Duration(seconds: 2));
-    // Nota: reabrir conexión exige que el caller vuelva a suscribirse con email.
-    // Si quieres re-suscripción automática, guarda el último email y vuelve a llamar _startSubscription.
+
+    if (_lastEmail != null && _lastEmail!.isNotEmpty) {
+      try {
+        await _open();
+        await _connectionInit();
+        await _startSubscription(userEmail: _lastEmail!);
+      } catch (e) {
+        // ignore: avoid_print
+        print('Reintento WS falló: $e');
+      }
+    }
   }
 
   Future<void> dispose() async {

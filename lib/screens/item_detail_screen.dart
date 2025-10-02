@@ -6,6 +6,8 @@ import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import '../widgets/comments_sheet.dart';
+
 
 final _storage = FlutterSecureStorage();
 
@@ -34,6 +36,29 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     super.initState();
     _loadItemDetails();
   }
+
+  void _openComments() async {
+  final idStr = await _storage.read(key: 'user_id');
+  if (!mounted) return;
+  if (idStr == null) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Debes iniciar sesión')));
+    return;
+  }
+  final pageId = int.tryParse(itemData['id']?.toString() ?? '');
+  if (pageId == null) return;
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => SizedBox(
+      height: MediaQuery.of(context).size.height * 0.85,
+      child: CommentsSheet(pageId: pageId),
+    ),
+  );
+}
+
+
+
   Future<Uint8List?> _downloadImageAsBrowser(String url) async {
     try {
       final response = await http.get(Uri.parse(url), headers: const {
@@ -432,6 +457,18 @@ void _loadItemDetails() async {
                               ),
                   ]),
                   const SizedBox(height: 10),
+                  const SizedBox(width: 16),
+                  InkWell(
+                    onTap: _openComments,
+                    child: Row(
+                      children: const [
+                        Icon(Icons.mode_comment_outlined),
+                        SizedBox(width: 6),
+                        Text('Comentarios', style: TextStyle(color: Colors.blue, decoration: TextDecoration.underline)),
+                      ],
+                    ),
+                  ),
+
                   Text('Publicado el: $publishedAt',
                       style: const TextStyle(color: Colors.grey)),
                   const SizedBox(height: 20),
