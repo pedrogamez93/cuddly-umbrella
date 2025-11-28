@@ -732,14 +732,14 @@ class _PodcastScreenState extends State<PodcastScreen> {
                                         },
                                       ),
                                       const SizedBox(width: 4),
-                                      IconButton(
-                                        tooltip: 'Diagnosticar esta URL',
-                                        icon: const Icon(Icons.bug_report),
-                                        onPressed: () {
-                                          diagnoseUrl(link.linkUrl);
-                                          setState(() => _showDiag = true);
-                                        },
-                                      ),
+                                      // IconButton(
+                                      //   tooltip: 'Diagnosticar esta URL',
+                                      //   icon: const Icon(Icons.bug_report),
+                                      //   onPressed: () {
+                                      //     diagnoseUrl(link.linkUrl);
+                                      //     setState(() => _showDiag = true);
+                                      //   },
+                                      // ),
                                     ],
                                   ),
                                   // Si es el actual, barra de progreso local
@@ -883,11 +883,11 @@ class _PodcastScreenState extends State<PodcastScreen> {
         backgroundColor: Colors.white,
         elevation: 2,
         actions: [
-          IconButton(
-            tooltip: 'Mostrar/Ocultar diagnóstico',
-            icon: const Icon(Icons.bug_report),
-            onPressed: () => setState(() => _showDiag = !_showDiag),
-          ),
+          // IconButton(
+          //   tooltip: 'Mostrar/Ocultar diagnóstico',
+          //   icon: const Icon(Icons.bug_report),
+          //   onPressed: () => setState(() => _showDiag = !_showDiag),
+          // ),
         ],
       ),
       endDrawer: Drawer(

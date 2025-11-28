@@ -5,6 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:jwt_decoder/jwt_decoder.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/notification_item.dart';
 import '../services/notifications_api.dart';
@@ -17,6 +18,8 @@ import '../screens/item_screen.dart';
 import '../screens/saved_news_screen.dart';
 import '../screens/profile_screen.dart';
 import '../widgets/base_screen.dart';
+import 'item_detail_screen.dart';
+import 'notification_detail_screen.dart';
 
 final _storage = FlutterSecureStorage();
 
@@ -157,6 +160,107 @@ class _RecentNotificationsPageState extends State<RecentNotificationsPage> {
     });
   }
 
+  // ---------- Navegación desde una notificación (igual que en NotificationsPage) ----------
+  Future<void> _openFromNotification(NotificationItem n) async {
+    await _markViewedOne(n);
+
+    final hint = _guessTargetFromNotification(n);
+
+    // Abre URL si aparece
+    if (hint.url != null && hint.url!.startsWith('http')) {
+      final uri = Uri.parse(hint.url!);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+    }
+
+    // Si hay ID => busca detalle y abre
+    if (hint.id != null && hint.id!.isNotEmpty) {
+      try {
+        final token = await _storage.read(key: 'access_token');
+        if (token == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No hay sesión para abrir el contenido.')),
+          );
+          return;
+        }
+        final uri = Uri.parse(
+          'https://somos-api-cms.qa.chileatiende.cl/api/mobile-app/news/get-page?page_id=${hint.id}',
+        );
+        final resp = await http.get(uri, headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        });
+
+        if (resp.statusCode == 200) {
+          final jsonBody = json.decode(resp.body) as Map<String, dynamic>;
+          final data = jsonBody['data'];
+          if (data != null && mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ItemDetailScreen(itemData: Map<String, dynamic>.from(data)),
+              ),
+            );
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('[RecentNotificationsPage] detalle por id falló: $e');
+      }
+    }
+
+    // Fallback a pantalla completa con toda la información
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => NotificationDetailScreen(notification: n),
+      ),
+    );
+  }
+
+  // Intenta deducir id/url desde la notificación (mensaje puede venir en JSON o con links)
+  _TargetHint _guessTargetFromNotification(NotificationItem n) {
+    String? id = n.targetId;
+    String? url = n.targetUrl;
+
+    final msg = n.message.trim();
+
+    // 1) Si el mensaje es JSON o contiene JSON
+    Map<String, dynamic>? parsed;
+    try {
+      if (msg.startsWith('{') && msg.endsWith('}')) {
+        parsed = json.decode(msg);
+      } else {
+        final start = msg.indexOf('{');
+        final end = msg.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          parsed = json.decode(msg.substring(start, end + 1));
+        }
+      }
+    } catch (_) {}
+    if (parsed != null) {
+      id  ??= parsed['targetId']?.toString() ?? parsed['id']?.toString();
+      url ??= parsed['targetUrl']?.toString() ?? parsed['url']?.toString();
+    }
+
+    // 2) URL en texto (string normal con escapes)
+    final mUrl = RegExp('https?:\\/\\/[^\\s)\'"<>]+').firstMatch(msg);
+    if (mUrl != null) url ??= mUrl.group(0);
+
+    // 3) page_id=123 / post_id=123 / id: 123 en el texto
+    final mId = RegExp(
+      r'(?:page_id|post_id|id)\s*[:=]\s*([0-9]+)',
+      caseSensitive: false,
+    ).firstMatch(msg);
+    if (mId != null) id ??= mId.group(1);
+
+    return _TargetHint(id: id, url: url);
+  }
+
   void _onBottomTap(int index) {
     setState(() => _bottomIndex = index);
     if (index == 0) {
@@ -250,32 +354,31 @@ class _RecentNotificationsPageState extends State<RecentNotificationsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Notificaciones recientes',
-                                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Notificaciones recientes',
+                              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pushNamed(context, '/notifications'),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(0, 0),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),
-                              TextButton(
-                                onPressed: () => Navigator.pushNamed(context, '/notifications'),
-                                style: TextButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                child: Text(
-                                  'Ver todas',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: theme.colorScheme.primary,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                              child: Text(
+                                'Ver todas',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
 
                         Expanded(
                           child: ListView.separated(
@@ -288,12 +391,11 @@ class _RecentNotificationsPageState extends State<RecentNotificationsPage> {
                                 message: n.message,
                                 dateTime: n.timestamp,
                                 viewed: n.viewed,
-                                onTap: () => _markViewedOne(n),
+                                onTap: () => _openFromNotification(n),
                               );
                             },
                           ),
                         ),
-                        // SIN paginación aquí
                       ],
                     ),
                   ),
@@ -310,6 +412,12 @@ class _RecentNotificationsPageState extends State<RecentNotificationsPage> {
       ),
     );
   }
+}
+
+class _TargetHint {
+  final String? id;
+  final String? url;
+  _TargetHint({this.id, this.url});
 }
 
 // -------- Drawer específico para la vista de recientes --------
@@ -360,7 +468,7 @@ class _DrawerMenuRecent extends StatelessWidget {
                 onPressed: onLogout,
               ),
             ),
-          ]),
+          ]), 
         ),
         Expanded(
           child: Container(
@@ -418,7 +526,7 @@ class _DrawerMenuRecent extends StatelessWidget {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) => ItemScreen(endpoint: endpoint, onItemSelected: (_) {}),
+                                  builder: (_) => ItemScreen(endpoint: endpoint, onItemSelected: (_) {}), 
                                 ),
                               );
                             }
@@ -434,7 +542,7 @@ class _DrawerMenuRecent extends StatelessWidget {
   }
 }
 
-// --------- Ítem de lista (idéntico al de notifications_page.dart, sin cambios) ---------
+// --------- Ítem de lista ----------
 class _NotificationRow extends StatelessWidget {
   const _NotificationRow({
     required this.title,

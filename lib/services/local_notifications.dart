@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -7,9 +6,8 @@ class LocalNotifs {
 
   static Future<void> init() async {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    await _plugin.initialize(
-      const InitializationSettings(android: android),
-    );
+    const init = InitializationSettings(android: android);
+    await _plugin.initialize(init);
 
     if (Platform.isAndroid) {
       await _plugin
@@ -19,19 +17,18 @@ class LocalNotifs {
     }
   }
 
-  static Future<void> show(Map<String, dynamic> notif) async {
+  static Future<void> show({
+    String? title,
+    String? body,
+  }) async {
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
-        'somos_notif_channel', 'Notificaciones Somos',
-        importance: Importance.high, priority: Priority.high,
+        'somos_notif_channel',
+        'Notificaciones Somos',
+        importance: Importance.high,
+        priority: Priority.high,
       ),
     );
-    await _plugin.show(
-      0,
-      notif['title'] as String?,
-      notif['message'] as String?,
-      details,
-      payload: jsonEncode(notif),
-    );
+    await _plugin.show(0, title, body, details);
   }
 }

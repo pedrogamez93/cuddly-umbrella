@@ -2,13 +2,16 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:html_unescape/html_unescape.dart';
 import 'package:http/http.dart' as http;
+import 'package:ips_app_chileatiende/screens/notification_detail_screen.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/notification_item.dart';
 import '../services/notifications_api.dart';
 
-// otras pantallas (drawer / bottom nav)
+// otras pantallas
 import '../screens/login_screen.dart';
 import '../screens/video_screen.dart';
 import '../screens/podcast_screen.dart';
@@ -16,15 +19,45 @@ import '../screens/item_screen.dart';
 import '../screens/saved_news_screen.dart';
 import '../screens/profile_screen.dart';
 import '../widgets/base_screen.dart';
+import '../screens/item_detail_screen.dart';
 
 final _storage = FlutterSecureStorage();
 
-class NotificationsPage extends StatefulWidget {
-  const NotificationsPage({
-    super.key,
-    this.onlyUnread = false,
-  });
+// -------- Helpers globales (HTML decode + relative time) --------
 
+final HtmlUnescape _htmlUnescape = HtmlUnescape();
+
+/// Decodifica entidades HTML (&lt;, &gt;, &amp;, &sol;, &comma;, etc.)
+/// y elimina tags simples como <p>, <strong>, etc.
+String decodeNotificationText(String input) {
+  if (input.isEmpty) return input;
+
+  // 1) Decodificar entidades
+  final unescaped = _htmlUnescape.convert(input);
+
+  // 2) Quitar tags HTML
+  final withoutTags = unescaped.replaceAll(RegExp(r'<[^>]+>'), '');
+
+  return withoutTags.trim();
+}
+
+String _relativeTime(DateTime dt) {
+  final now = DateTime.now();
+  final diff = now.difference(dt);
+  if (diff.inMinutes < 1) return 'Ahora';
+  if (diff.inMinutes < 60) return '${diff.inMinutes} min';
+  if (diff.inHours < 24) return '${diff.inHours} h';
+  if (diff.inDays < 7) return '${diff.inDays} d';
+  final m = (diff.inDays / 30).floor();
+  if (m < 12) return '${m.clamp(1, 11)} mes${m == 1 ? '' : 'es'}';
+  final y = (m / 12).floor();
+  return '$y año${y == 1 ? '' : 's'}';
+}
+
+// =================== PANTALLA PRINCIPAL ===================
+
+class NotificationsPage extends StatefulWidget {
+  const NotificationsPage({super.key, this.onlyUnread = false});
   final bool onlyUnread;
 
   @override
@@ -34,13 +67,11 @@ class NotificationsPage extends StatefulWidget {
 class _NotificationsPageState extends State<NotificationsPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  // --- Header / Drawer ---
   String? _userEmail = 'Cargando...';
   String? _fullName = 'Cargando...';
   List<dynamic> _menuItems = [];
   bool _isLoadingMenu = true;
 
-  // --- Notificaciones (estado) ---
   late final NotificationsApi _api = NotificationsApi(
     endpoint: dotenv.env['APPSYNC_HTTP_URL'] ?? '',
     apiKey: dotenv.env['APPSYNC_API_KEY'] ?? '',
@@ -48,12 +79,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   bool _loading = true;
   List<NotificationItem> _items = [];
-
-  // paginación visual
   static const int _perPage = 8;
   int _page = 1;
-
-  // bottom nav
   int _bottomIndex = 0;
 
   @override
@@ -136,12 +163,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
       final email = (_userEmail ?? '').trim();
       if (email.isEmpty || email == 'No disponible') return;
       await _api.markAllAsViewed(email);
-      // Optimista: marcar en memoria
       setState(() {
         _items = _items.map((n) => n.copyWith(viewed: true, viewedAt: DateTime.now())).toList();
-        if (widget.onlyUnread) {
-          _items = [];
-        }
+        if (widget.onlyUnread) _items = [];
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
@@ -149,13 +173,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _markViewedOne(NotificationItem n) async {
-    // actualizar UI optimista
     _applyOptimisticViewed(n.id);
     try {
       await _api.markNotificationAsViewed(n.id);
-      // nada más — ya quedó optimista
     } catch (e) {
-      // rollback si quieres (opcional)
       await _load();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
@@ -165,13 +186,110 @@ class _NotificationsPageState extends State<NotificationsPage> {
     setState(() {
       final idx = _items.indexWhere((e) => e.id == id);
       if (idx >= 0) {
-        final updated = _items[idx].copyWith(viewed: true, viewedAt: DateTime.now());
-        _items[idx] = updated;
+        _items[idx] = _items[idx].copyWith(viewed: true, viewedAt: DateTime.now());
       }
-      if (widget.onlyUnread) {
-        _items.removeWhere((e) => e.id == id);
-      }
+      if (widget.onlyUnread) _items.removeWhere((e) => e.id == id);
     });
+  }
+
+  // ---------- Navegación desde una notificación ----------
+  Future<void> _openFromNotification(NotificationItem n) async {
+    await _markViewedOne(n);
+
+    final hint = _guessTargetFromNotification(n);
+
+    // Abre URL si aparece
+    if (hint.url != null && hint.url!.startsWith('http')) {
+      final uri = Uri.parse(hint.url!);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+    }
+
+    // Si hay ID => busca detalle y abre
+    if (hint.id != null && hint.id!.isNotEmpty) {
+      try {
+        final token = await _storage.read(key: 'access_token');
+        if (token == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No hay sesión para abrir el contenido.')),
+          );
+          return;
+        }
+        final uri = Uri.parse(
+          'https://somos-api-cms.qa.chileatiende.cl/api/mobile-app/news/get-page?page_id=${hint.id}',
+        );
+        final resp = await http.get(uri, headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        });
+
+        if (resp.statusCode == 200) {
+          final jsonBody = json.decode(resp.body) as Map<String, dynamic>;
+          final data = jsonBody['data'];
+          if (data != null && mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ItemDetailScreen(itemData: Map<String, dynamic>.from(data)),
+              ),
+            );
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('[NotificationsPage] detalle por id falló: $e');
+      }
+    }
+
+    // Fallback: muestra toda la info
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => NotificationDetailScreen(notification: n),
+      ),
+    );
+  }
+
+  _TargetHint _guessTargetFromNotification(NotificationItem n) {
+    String? id = n.targetId;
+    String? url = n.targetUrl;
+
+    final msg = n.message.trim();
+
+    // 1) JSON embebido
+    Map<String, dynamic>? parsed;
+    try {
+      if (msg.startsWith('{') && msg.endsWith('}')) {
+        parsed = json.decode(msg);
+      } else {
+        final start = msg.indexOf('{');
+        final end = msg.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          parsed = json.decode(msg.substring(start, end + 1));
+        }
+      }
+    } catch (_) {}
+    if (parsed != null) {
+      id ??= parsed['targetId']?.toString() ?? parsed['id']?.toString();
+      url ??= parsed['targetUrl']?.toString() ?? parsed['url']?.toString();
+    }
+
+    // 2) URL en texto (string normal con escapes)
+    final mUrl = RegExp('https?:\\/\\/[^\\s)\'"<>]+').firstMatch(msg);
+    if (mUrl != null) url ??= mUrl.group(0);
+
+    // 3) page_id=123 / post_id=123 / id: 123
+    final mId = RegExp(
+      r'(?:page_id|post_id|id)\s*[:=]\s*([0-9]+)',
+      caseSensitive: false,
+    ).firstMatch(msg);
+    if (mId != null) id ??= mId.group(1);
+
+    return _TargetHint(id: id, url: url);
   }
 
   void _onBottomTap(int index) {
@@ -198,8 +316,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
-    // paging
     final pageCount = (_items.length / _perPage).ceil().clamp(1, 9999);
     _page = _page.clamp(1, pageCount);
     final start = (_page - 1) * _perPage;
@@ -207,13 +323,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
     return Scaffold(
       key: _scaffoldKey,
-
       appBar: AppBar(
         title: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Flexible(child: Image.asset('assets/images/logo.png', height: 40)),
-          ],
+          children: [Flexible(child: Image.asset('assets/images/logo.png', height: 40))],
         ),
         backgroundColor: Colors.white,
         elevation: 2,
@@ -231,7 +344,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
           ),
         ],
       ),
-
       endDrawer: _DrawerMenu(
         fullName: _fullName,
         userEmail: _userEmail,
@@ -261,7 +373,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
           } catch (_) {}
         },
       ),
-
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : (_items.isEmpty
@@ -273,8 +384,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(widget.onlyUnread ? 'No leídas' : 'Todas las Notifcaciones',
-                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                        Text(
+                          widget.onlyUnread ? 'No leídas' : 'Todas las Notificaciones',
+                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                        ),
                         const SizedBox(height: 8),
                         Expanded(
                           child: ListView.separated(
@@ -287,7 +400,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                 message: n.message,
                                 dateTime: n.timestamp,
                                 viewed: n.viewed,
-                                onTap: () => _markViewedOne(n),
+                                onTap: () => _openFromNotification(n),
                               );
                             },
                           ),
@@ -302,7 +415,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     ),
                   ),
                 )),
-
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _bottomIndex,
         onTap: _onBottomTap,
@@ -316,7 +428,15 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 }
 
-// ------------- Drawer -------------
+// =================== CLASES DE APOYO UI ===================
+
+class _TargetHint {
+  final String? id;
+  final String? url;
+  _TargetHint({this.id, this.url});
+}
+
+// ------------- Drawer / UI helpers idénticos -------------
 class _DrawerMenu extends StatelessWidget {
   const _DrawerMenu({
     required this.fullName,
@@ -341,9 +461,14 @@ class _DrawerMenu extends StatelessWidget {
           child: Column(children: [
             UserAccountsDrawerHeader(
               decoration: const BoxDecoration(color: Color(0xFF0E4B7E)),
-              accountName: Text(fullName ?? 'Usuario',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              accountEmail: Text(userEmail ?? 'No disponible', style: const TextStyle(fontSize: 14)),
+              accountName: Text(
+                fullName ?? 'Usuario',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              accountEmail: Text(
+                userEmail ?? 'No disponible',
+                style: const TextStyle(fontSize: 14),
+              ),
               currentAccountPicture: const CircleAvatar(
                 backgroundImage: NetworkImage(
                   'https://static.vecteezy.com/system/resources/thumbnails/005/545/335/small/user-sign-icon-person-symbol-human-avatar-isolated-on-white-backogrund-vector.jpg',
@@ -412,7 +537,10 @@ class _DrawerMenu extends StatelessWidget {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) => ItemScreen(endpoint: endpoint, onItemSelected: (_) {}),
+                                  builder: (_) => ItemScreen(
+                                    endpoint: endpoint,
+                                    onItemSelected: (_) {},
+                                  ),
                                 ),
                               );
                             }
@@ -428,7 +556,6 @@ class _DrawerMenu extends StatelessWidget {
   }
 }
 
-// ------------- Ítem de lista -------------
 class _NotificationRow extends StatelessWidget {
   const _NotificationRow({
     required this.title,
@@ -448,9 +575,12 @@ class _NotificationRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final small = theme.textTheme.bodySmall?.copyWith(color: Colors.grey[600]);
-
     final Color? bg = viewed ? Colors.grey[200] : Colors.white;
     final FontWeight titleWeight = viewed ? FontWeight.w500 : FontWeight.w700;
+
+    // 👇 Decodificar título y mensaje (HTML entities + tags)
+    final decodedTitle = decodeNotificationText(title);
+    final decodedMessage = decodeNotificationText(message);
 
     return Material(
       color: bg,
@@ -461,7 +591,6 @@ class _NotificationRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // avatar y punto azul si no leída
               Container(
                 width: 36,
                 height: 36,
@@ -486,11 +615,17 @@ class _NotificationRow extends StatelessWidget {
                   children: [
                     RichText(
                       text: TextSpan(
-                        style: theme.textTheme.bodyMedium?.copyWith(height: 1.25, color: theme.textTheme.bodyMedium?.color),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.25,
+                          color: theme.textTheme.bodyMedium?.color,
+                        ),
                         children: [
-                          TextSpan(text: title, style: TextStyle(fontWeight: titleWeight)),
+                          TextSpan(
+                            text: decodedTitle,
+                            style: TextStyle(fontWeight: titleWeight),
+                          ),
                           const TextSpan(text: '  '),
-                          TextSpan(text: message),
+                          TextSpan(text: decodedMessage),
                         ],
                       ),
                     ),
@@ -514,7 +649,6 @@ class _NotificationRow extends StatelessWidget {
   }
 }
 
-// ------------- Paginación -------------
 class _PagingBar extends StatelessWidget {
   const _PagingBar({required this.page, required this.pageCount, required this.onChange});
   final int page;
@@ -523,7 +657,8 @@ class _PagingBar extends StatelessWidget {
 
   List<int> _pagesToShow() {
     if (pageCount <= 6) return List.generate(pageCount, (i) => i + 1);
-    final set = <int>{1, pageCount, page - 1, page, page + 1}..removeWhere((p) => p < 1 || p > pageCount);
+    final set = <int>{1, pageCount, page - 1, page, page + 1}
+      ..removeWhere((p) => p < 1 || p > pageCount);
     final list = set.toList()..sort();
     return list;
   }
@@ -552,23 +687,18 @@ class _PagingBar extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        IconButton(visualDensity: VisualDensity.compact, onPressed: page > 1 ? () => onChange(page - 1) : null, icon: const Icon(Icons.chevron_left)),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          onPressed: page > 1 ? () => onChange(page - 1) : null,
+          icon: const Icon(Icons.chevron_left),
+        ),
         ...nums.map(number),
-        IconButton(visualDensity: VisualDensity.compact, onPressed: page < pageCount ? () => onChange(page + 1) : null, icon: const Icon(Icons.chevron_right)),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          onPressed: page < pageCount ? () => onChange(page + 1) : null,
+          icon: const Icon(Icons.chevron_right),
+        ),
       ],
     );
   }
-}
-
-String _relativeTime(DateTime dt) {
-  final now = DateTime.now();
-  final diff = now.difference(dt);
-  if (diff.inMinutes < 1) return 'Ahora';
-  if (diff.inMinutes < 60) return '${diff.inMinutes} min';
-  if (diff.inHours < 24) return '${diff.inHours} h';
-  if (diff.inDays < 7) return '${diff.inDays} d';
-  final m = (diff.inDays / 30).floor();
-  if (m < 12) return '${m.clamp(1, 11)} mes${m == 1 ? '' : 'es'}';
-  final y = (m / 12).floor();
-  return '$y año${y == 1 ? '' : 's'}';
 }

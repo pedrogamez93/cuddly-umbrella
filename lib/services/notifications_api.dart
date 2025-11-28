@@ -4,8 +4,8 @@ import '../models/notification_item.dart';
 
 class NotificationsApi {
   NotificationsApi({
-    required this.endpoint, // p.ej. https://<appsync-id>.appsync-api.us-east-1.amazonaws.com/graphql
-    required this.apiKey,   // da2-xxxx (QA según tu informe)
+    required this.endpoint,
+    required this.apiKey,
     http.Client? client,
   }) : _client = client ?? http.Client();
 
@@ -13,34 +13,127 @@ class NotificationsApi {
   final String apiKey;
   final http.Client _client;
 
-  // ================= GraphQL =================
+  // Selecciones de campos
+  static const _selectionBasic = r'''
+    id message title viewed viewedAt deleted deletedAt timestamp
+  ''';
 
-  // Queries (del informe)
-  static const _qAll = r'''
-    query GetNotifications($userEmail:String!){
-      getNotifications(userEmail:$userEmail){
-        id message title viewed viewedAt deleted deletedAt timestamp
+  static const _selectionExt = r'''
+    id message title viewed viewedAt deleted deletedAt timestamp
+    targetType targetId targetUrl data
+  ''';
+
+  String _buildQuery({required bool unread, required bool extended}) => '''
+    query ${unread ? 'GetUnreadNotifications' : 'GetNotifications'}(\$userEmail:String!){
+      ${unread ? 'getUnreadNotifications' : 'getNotifications'}(userEmail:\$userEmail){
+        ${extended ? _selectionExt : _selectionBasic}
       }
     }
   ''';
 
-  static const _qUnread = r'''
-    query GetUnreadNotifications($userEmail:String!){
-      getUnreadNotifications(userEmail:$userEmail){
-        id message title viewed viewedAt deleted deletedAt timestamp
+  String _buildMarkViewed({required bool extended}) => '''
+    mutation MarkNotificationAsViewed(\$notificationId: ID!) {
+      markNotificationAsViewed(notificationId: \$notificationId) {
+        ${extended ? _selectionExt : _selectionBasic}
       }
     }
   ''';
 
-  // Mutations (del informe)
-  static const _mMarkViewed = r'''
-    mutation MarkNotificationAsViewed($notificationId: ID!) {
-      markNotificationAsViewed(notificationId: $notificationId) {
-        id viewed viewedAt title message deleted deletedAt timestamp
-      }
-    }
-  ''';
+  Future<Map<String, dynamic>> _postGraphQL({
+    required String query,
+    Map<String, dynamic>? variables,
+    String? operationName,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse(endpoint),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: jsonEncode({
+        if (operationName != null) 'operationName': operationName,
+        'query': query,
+        if (variables != null) 'variables': variables,
+      }),
+    );
 
+    final map = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (map['errors'] != null) {
+      throw Exception('GraphQL errors: ${jsonEncode(map['errors'])}');
+    }
+    if (resp.statusCode != 200) {
+      throw Exception('AppSync ${resp.statusCode}: ${resp.body}');
+    }
+    return (map['data'] as Map<String, dynamic>? ?? const {});
+  }
+
+  // ===== API pública con fallback =====
+
+  Future<List<NotificationItem>> fetch({
+    required String userEmail,
+    bool onlyUnread = false,
+  }) async {
+    try {
+      final dataExt = await _postGraphQL(
+        query: _buildQuery(unread: onlyUnread, extended: true),
+        variables: {'userEmail': userEmail},
+        operationName:
+            onlyUnread ? 'GetUnreadNotifications' : 'GetNotifications',
+      );
+      final key =
+          onlyUnread ? 'getUnreadNotifications' : 'getNotifications';
+      final list = (dataExt[key] as List?)
+              ?.cast<Map<String, dynamic>>() ??
+          const <Map<String, dynamic>>[];
+      final items = list.map(NotificationItem.fromJson).toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return items;
+    } catch (e) {
+      // Si el esquema no soporta campos extendidos
+      final msg = e.toString();
+      if (!msg.contains('FieldUndefined')) rethrow;
+
+      final dataBasic = await _postGraphQL(
+        query: _buildQuery(unread: onlyUnread, extended: false),
+        variables: {'userEmail': userEmail},
+        operationName:
+            onlyUnread ? 'GetUnreadNotifications' : 'GetNotifications',
+      );
+      final key =
+          onlyUnread ? 'getUnreadNotifications' : 'getNotifications';
+      final list = (dataBasic[key] as List?)
+              ?.cast<Map<String, dynamic>>() ??
+          const <Map<String, dynamic>>[];
+      final items = list.map(NotificationItem.fromJson).toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return items;
+    }
+  }
+
+  Future<NotificationItem> markNotificationAsViewed(String id) async {
+    try {
+      final dataExt = await _postGraphQL(
+        query: _buildMarkViewed(extended: true),
+        variables: {'notificationId': id},
+        operationName: 'MarkNotificationAsViewed',
+      );
+      return NotificationItem.fromJson(
+          (dataExt['markNotificationAsViewed'] as Map<String, dynamic>));
+    } catch (e) {
+      final msg = e.toString();
+      if (!msg.contains('FieldUndefined')) rethrow;
+
+      final dataBasic = await _postGraphQL(
+        query: _buildMarkViewed(extended: false),
+        variables: {'notificationId': id},
+        operationName: 'MarkNotificationAsViewed',
+      );
+      return NotificationItem.fromJson(
+          (dataBasic['markNotificationAsViewed'] as Map<String, dynamic>));
+    }
+  }
+
+  // Otros
   static const _mDelete = r'''
     mutation DeleteNotification($notificationId: ID!) {
       deleteNotification(notificationId: $notificationId) {
@@ -64,67 +157,6 @@ class NotificationsApi {
       }
     }
   ''';
-
-  Future<Map<String, dynamic>> _postGraphQL({
-    required String query,
-    Map<String, dynamic>? variables,
-    String? operationName,
-  }) async {
-    final resp = await _client
-        .post(
-          Uri.parse(endpoint),
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-          },
-          body: jsonEncode({
-            if (operationName != null) 'operationName': operationName,
-            'query': query,
-            if (variables != null) 'variables': variables,
-          }),
-        )
-        .timeout(const Duration(seconds: 25));
-
-    if (resp.statusCode != 200) {
-      throw Exception('AppSync ${resp.statusCode}: ${resp.body}');
-    }
-    final map = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (map['errors'] != null) {
-      throw Exception('GraphQL errors: ${jsonEncode(map['errors'])}');
-    }
-    return (map['data'] as Map<String, dynamic>? ?? const {});
-  }
-
-  // ================ API Pública =================
-
-  Future<List<NotificationItem>> fetch({
-    required String userEmail,
-    bool onlyUnread = false,
-  }) async {
-    final data = await _postGraphQL(
-      query: onlyUnread ? _qUnread : _qAll,
-      variables: {'userEmail': userEmail},
-      operationName: onlyUnread ? 'GetUnreadNotifications' : 'GetNotifications',
-    );
-
-    final list = (data[onlyUnread ? 'getUnreadNotifications' : 'getNotifications'] as List?)
-            ?.cast<Map<String, dynamic>>() ??
-        const <Map<String, dynamic>>[];
-
-    final items = list.map(NotificationItem.fromJson).toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp)); // desc
-    return items;
-  }
-
-  Future<NotificationItem> markNotificationAsViewed(String id) async {
-    final data = await _postGraphQL(
-      query: _mMarkViewed,
-      variables: {'notificationId': id},
-      operationName: 'MarkNotificationAsViewed',
-    );
-    final node = (data['markNotificationAsViewed'] as Map<String, dynamic>);
-    return NotificationItem.fromJson(node);
-  }
 
   Future<void> deleteNotification(String id) async {
     await _postGraphQL(

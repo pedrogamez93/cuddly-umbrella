@@ -38,3 +38,30 @@ class Comment {
         childCommentsCount: j['child_comments_count'] as int?,
       );
 }
+
+/// Usuario que dio like a un comentario
+class Liker {
+  final int appUserId;
+  final String? names;
+  final String? surnames;
+  final String? email;
+  final String? avatarUrl;
+
+  Liker({
+    required this.appUserId,
+    this.names,
+    this.surnames,
+    this.email,
+    this.avatarUrl,
+  });
+
+  factory Liker.fromJson(Map<String, dynamic> j) => Liker(
+        appUserId: j['app_user_id'] is int
+            ? j['app_user_id']
+            : int.tryParse('${j['app_user_id']}') ?? -1,
+        names: j['names'] as String?,
+        surnames: j['surnames'] as String?,
+        email: j['email'] as String?,
+        avatarUrl: (j['avatar_url'] ?? j['avatarUrl']) as String?,
+      );
+}

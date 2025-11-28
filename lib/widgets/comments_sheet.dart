@@ -108,6 +108,54 @@ class _CommentsSheetState extends State<CommentsSheet> {
     }
   }
 
+  /// Abre un modal con la lista de usuarios que dieron like
+  Future<void> _showLikers(Comment c) async {
+    try {
+      final likers = await _api.getCommentLikers(commentId: c.id);
+      if (!mounted) return;
+
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (_) {
+          if (likers.isEmpty) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: Text('Aún nadie ha dado “me gusta”.')),
+            );
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: likers.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (_, i) {
+              final u = likers[i];
+              final fullName = ((u.names ?? 'Usuario') + (u.surnames != null ? ' ${u.surnames}' : '')).trim();
+              return ListTile(
+                leading: CircleAvatar(
+                  child: (u.avatarUrl == null || u.avatarUrl!.isEmpty)
+                      ? const Icon(Icons.person)
+                      : null,
+                  // Si manejas avatar real, descomenta:
+                  // backgroundImage: (u.avatarUrl != null && u.avatarUrl!.isNotEmpty)
+                  //     ? NetworkImage(u.avatarUrl!)
+                  //     : null,
+                ),
+                title: Text(fullName.isEmpty ? (u.email ?? 'Usuario') : fullName),
+                subtitle: u.email != null ? Text(u.email!) : null,
+              );
+            },
+          );
+        },
+      );
+    } on AuthException catch (e) {
+      await _showAuthDialog(e.message);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
   void _openReplies(Comment c) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => _ChildCommentsPage(
@@ -225,10 +273,16 @@ class _CommentsSheetState extends State<CommentsSheet> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 6),
-            Container(width: 36, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(3))),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(3)),
+            ),
             const SizedBox(height: 10),
-            Text(widget.postId != null ? 'Comentarios del Post' : 'Comentarios de la Página',
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+            Text(
+              widget.postId != null ? 'Comentarios del Post' : 'Comentarios de la Página',
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
             const Divider(),
 
             // input crear
@@ -302,9 +356,47 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                     crossAxisAlignment: WrapCrossAlignment.center,
                                     children: [
                                       Text(_relTime(c.createdAt), style: Theme.of(context).textTheme.bodySmall),
-                                      _action(icon: Icons.thumb_up_alt_outlined, label: '${c.likesCount}', onTap: () => _toggleLike(c)),
+
+                                      // Icono = toggle like, Número = ver lista de likers
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          InkWell(
+                                            onTap: () => _toggleLike(c),
+                                            borderRadius: BorderRadius.circular(6),
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                              child: Icon(Icons.thumb_up_alt_outlined, size: 18),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          InkWell(
+                                            onTap: () => _showLikers(c),
+                                            borderRadius: BorderRadius.circular(6),
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                              child: Text('Me gusta'),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          // contador visible
+                                          InkWell(
+                                            onTap: () => _showLikers(c),
+                                            borderRadius: BorderRadius.circular(6),
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                              child: Text('${c.likesCount}'),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
                                       if ((c.childCommentsCount ?? 0) > 0)
-                                        _action(icon: Icons.forum_outlined, label: '${c.childCommentsCount} resp.', onTap: () => _openReplies(c)),
+                                        _action(
+                                          icon: Icons.forum_outlined,
+                                          label: '${c.childCommentsCount} resp.',
+                                          onTap: () => _openReplies(c),
+                                        ),
                                     ],
                                   ),
                                 ],
@@ -398,6 +490,26 @@ class _ChildCommentsPageState extends State<_ChildCommentsPage> {
     }
   }
 
+  Future<void> _toggleLike(Comment c) async {
+    try {
+      await widget.api.toggleLike(appUserId: widget.appUserId, commentId: c.id);
+      await _load(page: _page);
+    } on AuthException catch (e) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Sesión expirada'),
+          content: Text(e.message),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+        ),
+      );
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
   Future<void> _reply() async {
     final txt = _replyCtrl.text.trim();
     if (txt.length < 5) return;
@@ -467,11 +579,22 @@ class _ChildCommentsPageState extends State<_ChildCommentsPage> {
                                   crossAxisAlignment: WrapCrossAlignment.center,
                                   children: [
                                     Text(_relTime(c.createdAt), style: Theme.of(context).textTheme.bodySmall),
-                                    Row(mainAxisSize: MainAxisSize.min, children: [
-                                      const Icon(Icons.favorite_border, size: 16),
-                                      const SizedBox(width: 4),
-                                      Text('${c.likesCount}'),
-                                    ]),
+                                    // Like tappable con pulgar arriba
+                                    InkWell(
+                                      onTap: () => _toggleLike(c),
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.thumb_up_alt_outlined, size: 16),
+                                            const SizedBox(width: 4),
+                                            Text('${c.likesCount}'),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ],

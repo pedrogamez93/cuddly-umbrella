@@ -92,10 +92,11 @@ class CommentsApi {
     );
   }
 
-  Future<Map<String, dynamic>> getCommentLikes({
+  /// Obtiene la lista de usuarios que dieron like a un comentario
+  Future<List<Liker>> getCommentLikers({
     required int commentId,
     int page = 1,
-    int perPage = 10,
+    int perPage = 50,
   }) async {
     final h = await _headers();
     final uri = Uri.parse('$_base/get-comment-likes').replace(queryParameters: {
@@ -105,7 +106,12 @@ class CommentsApi {
     });
     final r = await _client.get(uri, headers: h);
     _throwIfNotOk(r);
-    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+
+    final decoded = jsonDecode(utf8.decode(r.bodyBytes));
+    final list = decoded is List
+        ? decoded
+        : (decoded is Map<String, dynamic> ? (decoded['data'] as List? ?? []) : []);
+    return List<Liker>.from(list.map((e) => Liker.fromJson(e as Map<String, dynamic>)));
   }
 
   // ------------ WRITES (x-www-form-urlencoded como en Postman) ------------

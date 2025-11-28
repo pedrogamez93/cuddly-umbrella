@@ -1,5 +1,4 @@
-// lib/screens/logged_in_screen.dart
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
@@ -12,7 +11,8 @@ import '../repositories/post_repository.dart';
 import '../services/api_client.dart';
 import '../services/appsync_ws.dart';
 import '../widgets/post_card.dart';
-import '../widgets/comments_sheet.dart'; // para abrir el sheet de comentarios
+import '../widgets/comments_sheet.dart';
+import '../widgets/share_content_sheet.dart'; 
 import 'likes_screen.dart';
 import 'login_screen.dart';
 
@@ -26,25 +26,21 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
   final _storage = const FlutterSecureStorage();
   final _scroll = ScrollController();
 
-  // ✅ el provider vive como campo, NO dentro de build()
+  // Provider como campo
   late final FeedProvider _feed = FeedProvider(PostRepository(ApiClient()));
-
   AppSyncWS? _ws;
 
   @override
   void initState() {
     super.initState();
-    // Asegura locale español para timeago en toda la app
     timeago.setLocaleMessages('es', timeago.EsMessages());
     _scroll.addListener(_onScroll);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _bootstrap();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
   }
 
   @override
   void dispose() {
+    debugPrint('[LoggedInScreen] dispose()');
     _scroll.dispose();
     _ws?.dispose();
     super.dispose();
@@ -54,18 +50,21 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 300 &&
         _feed.hasMore &&
         !_feed.isFetchingMore) {
+      debugPrint('[LoggedInScreen] near end -> fetchNext()');
       _feed.fetchNext();
     }
   }
 
   Future<void> _bootstrap() async {
     try {
+      debugPrint('[LoggedInScreen] bootstrap() start');
       final access = await _storage.read(key: 'access_token');
       final userId = await _storage.read(key: 'user_id');
 
       if (!mounted) return;
 
       if (access == null || userId == null) {
+        debugPrint('[LoggedInScreen] no token/user -> go LoginScreen');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -82,27 +81,48 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
       email ??= await _storage.read(key: 'user_email');
 
       await _feed.init(Session(accessToken: access, userId: userId, email: email));
+      debugPrint('[LoggedInScreen] feed.init done (email=$email)');
 
       if (email != null) {
-       _ws = AppSyncWS(
-            wssUrl: 'wss://notificaciones-somos-wss.qa.chileatiende.cl/graphql/realtime',
-            host: 'avnaqxexqvabxdndyro3w42zfi.appsync-api.us-east-1.amazonaws.com',
-            apiKey: '<APP_SYNC_API_KEY_QA>',
-            onNotification: (notif) {
-              if (!mounted) return;
-              final title = (notif['title'] ?? 'Notificación').toString();
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('🔔 $title')));
-            },
-          );
+        _ws = AppSyncWS(
+          wssUrl: 'wss://notificaciones-somos-wss.qa.chileatiende.cl/graphql/realtime',
+          host: 'avnaqxexqvabxdndyro3w42zfi.appsync-api.us-east-1.amazonaws.com',
+          apiKey: '<APP_SYNC_API_KEY_QA>',
+          onNotification: (notif) {
+            if (!mounted) return;
+            final title = (notif['title'] ?? 'Notificación').toString();
+            debugPrint('[LoggedInScreen] notif: $title');
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('🔔 $title')));
+          },
+        );
         await _ws!.connectAndSubscribe();
+        debugPrint('[LoggedInScreen] AppSyncWS conectado y suscrito.');
       }
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('[LoggedInScreen] bootstrap ERROR: $e\n$st');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error al iniciar el feed: $e')),
       );
     }
   }
+
+  // ---------- COMPARTIR (hoja al estilo Instagram) ----------
+  Future<void> _openSharePost(BuildContext context, int postId, String title) async {
+    await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      builder: (_) => ShareContentSheet(
+        type: 'post',
+        contentId: postId.toString(),
+        initialTitle: title.isEmpty ? null : 'Te comparto: $title',
+        initialMessage: 'Revisa este post en la app.',
+      ),
+    );
+  }
+  // ----------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -121,7 +141,10 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
                 : (prov.posts.isEmpty
                     ? _emptyState(context)
                     : RefreshIndicator(
-                        onRefresh: prov.refresh,
+                        onRefresh: () async {
+                          debugPrint('[LoggedInScreen] pull-to-refresh');
+                          await prov.refresh();
+                        },
                         child: ListView.builder(
                           controller: _scroll,
                           itemCount: prov.posts.length + (prov.hasMore ? 1 : 0),
@@ -133,6 +156,8 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
                               );
                             }
                             final p = prov.posts[i];
+                            debugPrint('[LoggedInScreen] render post id=${p.id} imgs=${p.imageUrls.length}');
+
                             return PostCard(
                               postId: p.id,
                               title: p.title,
@@ -142,7 +167,7 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
                               isLiked: prov.liked.contains(p.id),
                               isSaved: prov.saved.contains(p.id),
                               likeCount: prov.likeCount[p.id] ?? p.likesCount,
-                              commentCount: p.commentsCount, // <- NUEVO
+                              commentCount: p.commentsCount,
                               onToggleLike: () => prov.toggleLike(p.id),
                               onToggleSave: () => prov.toggleSaved(p.id),
                               onTapLikes: () {
@@ -164,6 +189,8 @@ class _LoggedInScreenState extends State<LoggedInScreen> {
                                   ),
                                 );
                               },
+                              // 👇 NUEVO: botón "Compartir" al lado del de comentarios
+                              onTapShare: () => _openSharePost(context, p.id, p.title),
                             );
                           },
                         ),
